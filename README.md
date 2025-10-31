@@ -69,7 +69,7 @@ No external dependencies required - just standard Python!
 | Format | Read | Write | Notes |
 |---------|---------|-----------|-------|
 | `.mid` | ✅ | ✅ | Preserves VOCALS and special events |
-| `.chart` | ✅ | ✅ | Clone Hero native format |
+| `.chart` | ✅ | ✅ | Clone Hero/Guitar Hero 3 native format |
 
 ---
 
