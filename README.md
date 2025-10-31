@@ -138,7 +138,6 @@ Found a bug? [Open an issue](https://github.com/yourusername/gh-chart-reducer/is
 
 - Clone Hero community for format documentation
 - Guitar Hero World Tour for reduction algorithm inspiration
-- All testers who tried different versions
 
 ---
 
