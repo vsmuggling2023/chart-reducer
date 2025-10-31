@@ -1,8 +1,6 @@
 # 🎸 GH Chart Reducer
 
 [![Python Version](https://img.shields.io/badge/python-3.7%2B-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)](https://github.com)
 
 **Automatic difficulty generator for Clone Hero and Guitar Hero** with intelligent adaptive reduction algorithm.
 
