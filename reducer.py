@@ -537,7 +537,7 @@ def crear_seccion_chart(nombre, notas):
 class GHReducerApp:
     def __init__(self, master):
         self.master = master
-        master.title("GH Chart Reducer v7.1 - REDUCCIÓN ADAPTATIVA MEJORADA")
+        master.title("GH Chart Reducer v0.11")
         master.geometry("700x720")
         
         self.ruta_archivo = ""
