@@ -110,7 +110,8 @@ def leer_midi_completo(ruta_archivo):
                     notas_hard = [(t, n, d) for t, n, d in notas if 84 <= n <= 88]
                     notas_medium = [(t, n, d) for t, n, d in notas if 72 <= n <= 76]
                     notas_easy = [(t, n, d) for t, n, d in notas if 60 <= n <= 64]
-                    notas_especiales = [(t, n) for t, n, d in notas if n < 60 or (n > 64 and n < 72) or (n > 76 and n < 84) or (n > 88 and n < 96) or n > 100]
+                    # EVENTOS ESPECIALES: Star Power (116), Solo (103-106), etc.
+                    notas_especiales = [(t, n, d) for t, n, d in notas if n < 60 or (n > 64 and n < 72) or (n > 76 and n < 84) or (n > 88 and n < 96) or n > 100]
                     
                     # Si tiene al menos Expert O alguna dificultad, procesar
                     if notas_expert or notas_hard or notas_medium or notas_easy:
@@ -537,7 +538,7 @@ def crear_seccion_chart(nombre, notas):
 class GHReducerApp:
     def __init__(self, master):
         self.master = master
-        master.title("GH Chart Reducer v0.11")
+        master.title("GH Chart Reducer v0.12")
         master.geometry("700x720")
         
         self.ruta_archivo = ""
@@ -564,7 +565,7 @@ class GHReducerApp:
         frame_info = tk.LabelFrame(master, text="💡 Información", padx=10, pady=10)
         frame_info.pack(pady=5, padx=10, fill=tk.X)
         
-        info_text = "✅ .mid → guarda como .mid (preserva VOCALS, Star Power ⭐ y tempos)\n✅ .chart → guarda como .chart\n✅ Reducción ADAPTATIVA: se ajusta automáticamente a la densidad de cada instrumento"
+        info_text = "✅ .mid → guarda como .mid (preserva VOCALS, Star Power ⭐, Solo 🎸 y tempos)\n✅ .chart → guarda como .chart\n✅ Reducción ADAPTATIVA: se ajusta automáticamente a la densidad de cada instrumento"
         tk.Label(frame_info, text=info_text, font=("Arial", 9), justify=tk.LEFT).pack()
         
         frame_inst = tk.LabelFrame(master, text="Instrumento a Reducir", padx=10, pady=10)
@@ -631,7 +632,7 @@ class GHReducerApp:
             
             self.log(f"✅ Pistas originales preservadas: {len(self.midi_pistas)}")
             self.log(f"✅ Ticks per beat: {self.ticks_per_beat}")
-            self.log("   (Incluye VOCALS, Star Power ⭐, tempos, eventos, etc.)\n")
+            self.log("   (Incluye VOCALS, Star Power ⭐, Solo 🎸, tempos, eventos, etc.)\n")
             
             self.log("📊 Instrumentos detectados:")
             for inst_code, data in self.instrumentos_disponibles.items():
@@ -645,7 +646,7 @@ class GHReducerApp:
                 
                 # Mostrar eventos especiales
                 if 'notas_especiales' in data and data['notas_especiales']:
-                    self.log(f"   ⭐ {len(data['notas_especiales'])} eventos especiales (Star Power, etc.)")
+                    self.log(f"   ⭐ {len(data['notas_especiales'])} eventos especiales (Star Power, Solo, etc.)")
                 
                 for diff in DIFICULTADES:
                     if diff in data:
@@ -735,10 +736,11 @@ class GHReducerApp:
             notas_expert = data['Expert']
             ticks_expert = len(set(n[0] for n in notas_expert))
             
-            # Extraer ticks de Star Power (nota MIDI 116)
+            # Extraer ticks de Star Power (nota MIDI 116) y marcadores de Solo (103-106)
             star_power_ticks = []
             if 'notas_especiales' in data:
-                star_power_ticks = [tick for tick, nota in data['notas_especiales'] if nota == 116]
+                # Star Power usa nota MIDI 116
+                star_power_ticks = [tick for tick, nota, dur in data['notas_especiales'] if nota == 116]
             
             self.log(f"\n🎸 {inst_nombre}:")
             self.log(f"   Expert: {ticks_expert} notas")
@@ -856,7 +858,7 @@ class GHReducerApp:
         """
         Crea una pista MIDI con múltiples dificultades + eventos especiales.
         dificultades_dict: {'Expert': [(tick, fret, dur), ...], 'Hard': [...], ...}
-        eventos_especiales: [(tick, nota_midi), ...] - Star Power, etc.
+        eventos_especiales: [(tick, nota_midi, duration), ...] - Star Power (116), Solo (103-106), etc.
         """
         eventos = bytearray()
         
@@ -880,9 +882,9 @@ class GHReducerApp:
                 todos_eventos.append((tick, 'on', nota_midi))
                 todos_eventos.append((tick + dur, 'off', nota_midi))
         
-        # 2. Agregar eventos especiales (Star Power, etc.)
-        for tick, nota_midi in eventos_especiales:
-            dur = 10  # Duración mínima para eventos especiales
+        # 2. Agregar eventos especiales (Star Power, Solo, etc.)
+        for tick, nota_midi, duration in eventos_especiales:
+            dur = duration if duration > 0 else 10
             todos_eventos.append((tick, 'on', nota_midi))
             todos_eventos.append((tick + dur, 'off', nota_midi))
         
