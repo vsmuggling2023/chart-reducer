@@ -106,12 +106,14 @@ def leer_midi_completo(ruta_archivo):
                 # Detectar y SEPARAR notas por dificultad
                 if inst_code and notas:
                     # SEPARAR todas las notas por rango MIDI
-                    notas_expert = [(t, n, d) for t, n, d in notas if 96 <= n <= 100]
+                    # Expert: 95 (open/morada) + 96-100 (G,R,Y,B,O)
+                    notas_expert = [(t, n, d) for t, n, d in notas if 95 <= n <= 100]
                     notas_hard = [(t, n, d) for t, n, d in notas if 84 <= n <= 88]
                     notas_medium = [(t, n, d) for t, n, d in notas if 72 <= n <= 76]
                     notas_easy = [(t, n, d) for t, n, d in notas if 60 <= n <= 64]
                     # EVENTOS ESPECIALES: Star Power (116), Solo (103-106), etc.
-                    notas_especiales = [(t, n, d) for t, n, d in notas if n < 60 or (n > 64 and n < 72) or (n > 76 and n < 84) or (n > 88 and n < 96) or n > 100]
+                    # Excluir 95 (open Expert) del rango de especiales
+                    notas_especiales = [(t, n, d) for t, n, d in notas if n < 60 or (n > 64 and n < 72) or (n > 76 and n < 84) or (n > 88 and n < 95) or n > 100]
                     
                     # Si tiene al menos Expert O alguna dificultad, procesar
                     if notas_expert or notas_hard or notas_medium or notas_easy:
@@ -538,7 +540,7 @@ def crear_seccion_chart(nombre, notas):
 class GHReducerApp:
     def __init__(self, master):
         self.master = master
-        master.title("GH Chart Reducer v0.12")
+        master.title("GH Chart Reducer v0.13")
         master.geometry("700x720")
         
         self.ruta_archivo = ""
@@ -820,27 +822,18 @@ class GHReducerApp:
                     # Marcar esta pista como procesada
                     pistas_procesadas_indices.add(idx)
                     
-                    # Solo usar las dificultades REGENERADAS (no combinar con existentes)
-                    todas_dificultades = {}
-                    
-                    # Siempre incluir Expert original
-                    if 'Expert' in self.instrumentos_disponibles[inst_code]:
-                        todas_dificultades['Expert'] = self.instrumentos_disponibles[inst_code]['Expert']
-                    
-                    # Agregar dificultades REGENERADAS (Hard, Medium, Easy)
-                    for diff, notas in nuevas_diffs.items():
-                        todas_dificultades[diff] = notas
-                    
-                    # Obtener eventos especiales
-                    eventos_especiales = self.instrumentos_disponibles[inst_code].get('notas_especiales', [])
-                    
-                    # Crear nueva pista con TODAS las dificultades + eventos especiales
-                    pista_nueva = self.crear_pista_multidificultad(nombre_pista_buscado, todas_dificultades, eventos_especiales)
+                    # NUEVA ESTRATEGIA: Modificar pista original eliminando solo Hard/Medium/Easy
+                    # y agregando las nuevas, SIN TOCAR Expert
+                    pista_nueva = self.modificar_pista_preservando_expert(
+                        pista_original[8:],
+                        nombre_pista_buscado,
+                        nuevas_diffs
+                    )
                     pistas_finales.append(pista_nueva)
                     pista_reemplazada = True
                     
                     inst_nombre = INSTRUMENTOS.get(inst_code, inst_code)
-                    self.log(f"   ✅ Pista '{nombre}' ({inst_nombre}) actualizada")
+                    self.log(f"   ✅ Pista '{nombre}' ({inst_nombre}) actualizada (Expert 100% preservado)")
                     break
             
             # Si esta pista NO fue procesada, mantenerla original
@@ -853,6 +846,305 @@ class GHReducerApp:
         
         self.log(f"\n✅ MIDI guardado con {num_total} pistas")
         self.log(f"   Instrumentos actualizados: {len(instrumentos_procesados)}")
+    
+    def modificar_pista_preservando_expert(self, track_data_original, nombre_pista, nuevas_diffs):
+        """
+        Modifica una pista MIDI eliminando SOLO las notas de Hard/Medium/Easy
+        y agregando las nuevas generadas, preservando Expert 100% intacto.
+        """
+        eventos = bytearray()
+        
+        # Track Name
+        nombre_bytes = nombre_pista.encode('latin-1')
+        eventos.extend(b'\x00\xFF\x03')
+        eventos.extend(escribir_variable_length(len(nombre_bytes)))
+        eventos.extend(nombre_bytes)
+        
+        # Paso 1: Extraer TODOS los eventos de la pista original
+        todos_eventos_originales = []
+        pos = 0
+        tiempo_absoluto = 0
+        running_status = 0
+        
+        while pos < len(track_data_original):
+            try:
+                delta_time, pos = leer_variable_length(track_data_original, pos)
+                tiempo_absoluto += delta_time
+                
+                if pos >= len(track_data_original):
+                    break
+                
+                status = track_data_original[pos]
+                if status < 0x80:
+                    status = running_status
+                else:
+                    pos += 1
+                    running_status = status
+                
+                # Note On (0x90-0x9F)
+                if 0x90 <= status <= 0x9F:
+                    if pos + 1 < len(track_data_original):
+                        note = track_data_original[pos]
+                        velocity = track_data_original[pos + 1]
+                        
+                        # FILTRAR: Eliminar solo Hard/Medium/Easy (60-88)
+                        # MANTENER: Expert (95-100), eventos especiales, etc.
+                        if not (60 <= note <= 88):
+                            todos_eventos_originales.append((tiempo_absoluto, 'on', note, velocity))
+                        pos += 2
+                
+                # Note Off (0x80-0x8F)
+                elif 0x80 <= status <= 0x8F:
+                    if pos + 1 < len(track_data_original):
+                        note = track_data_original[pos]
+                        
+                        # FILTRAR: Eliminar solo Hard/Medium/Easy (60-88)
+                        if not (60 <= note <= 88):
+                            todos_eventos_originales.append((tiempo_absoluto, 'off', note, 0))
+                        pos += 2
+                
+                # Otros eventos MIDI (control changes, meta events, etc.) - PRESERVAR TODOS
+                elif 0xA0 <= status <= 0xBF:
+                    if pos + 1 < len(track_data_original):
+                        byte1 = track_data_original[pos]
+                        byte2 = track_data_original[pos + 1]
+                        todos_eventos_originales.append((tiempo_absoluto, 'cc', byte1, byte2))
+                        pos += 2
+                elif 0xC0 <= status <= 0xDF:
+                    if pos < len(track_data_original):
+                        byte1 = track_data_original[pos]
+                        todos_eventos_originales.append((tiempo_absoluto, 'pc', byte1, 0))
+                        pos += 1
+                elif 0xE0 <= status <= 0xEF:
+                    if pos + 1 < len(track_data_original):
+                        byte1 = track_data_original[pos]
+                        byte2 = track_data_original[pos + 1]
+                        todos_eventos_originales.append((tiempo_absoluto, 'pb', byte1, byte2))
+                        pos += 2
+                elif status == 0xFF:
+                    # Meta events - PRESERVAR (excepto Track Name que ya agregamos)
+                    if pos < len(track_data_original):
+                        meta_type = track_data_original[pos]
+                        pos += 1
+                        length, pos = leer_variable_length(track_data_original, pos)
+                        if meta_type != 0x03:  # No duplicar Track Name
+                            meta_data = track_data_original[pos:pos+length]
+                            todos_eventos_originales.append((tiempo_absoluto, 'meta', meta_type, meta_data))
+                        pos += length
+                elif status == 0xF0 or status == 0xF7:
+                    length, pos = leer_variable_length(track_data_original, pos)
+                    sysex_data = track_data_original[pos:pos+length]
+                    todos_eventos_originales.append((tiempo_absoluto, 'sysex', status, sysex_data))
+                    pos += length
+                else:
+                    pos += 1
+            except:
+                pos += 1
+        
+        # Paso 2: Agregar nuevas dificultades generadas (Hard, Medium, Easy)
+        for diff, notas in nuevas_diffs.items():
+            base_nota = RANGOS_NOTAS_MIDI.get(diff, 96)
+            for tick, fret, duration in notas:
+                nota_midi = base_nota + fret
+                dur = duration if duration > 0 else 10
+                
+                todos_eventos_originales.append((tick, 'on', nota_midi, 96))
+                todos_eventos_originales.append((tick + dur, 'off', nota_midi, 0))
+        
+        # Paso 3: Ordenar todos los eventos por tick
+        todos_eventos_originales.sort(key=lambda x: (x[0], x[1] == 'on'))
+        
+        # Paso 4: Escribir eventos MIDI
+        ultimo_tick = 0
+        for evento in todos_eventos_originales:
+            tick_abs = evento[0]
+            tipo = evento[1]
+            delta = tick_abs - ultimo_tick
+            
+            if tipo == 'on':
+                eventos.extend(escribir_variable_length(delta))
+                eventos.append(0x90)
+                eventos.append(evento[2])
+                eventos.append(evento[3])
+            elif tipo == 'off':
+                eventos.extend(escribir_variable_length(delta))
+                eventos.append(0x80)
+                eventos.append(evento[2])
+                eventos.append(0)
+            elif tipo == 'cc':
+                eventos.extend(escribir_variable_length(delta))
+                eventos.append(0xB0)
+                eventos.append(evento[2])
+                eventos.append(evento[3])
+            elif tipo == 'pc':
+                eventos.extend(escribir_variable_length(delta))
+                eventos.append(0xC0)
+                eventos.append(evento[2])
+            elif tipo == 'pb':
+                eventos.extend(escribir_variable_length(delta))
+                eventos.append(0xE0)
+                eventos.append(evento[2])
+                eventos.append(evento[3])
+            elif tipo == 'meta':
+                eventos.extend(escribir_variable_length(delta))
+                eventos.append(0xFF)
+                eventos.append(evento[2])
+                eventos.extend(escribir_variable_length(len(evento[3])))
+                eventos.extend(evento[3])
+            elif tipo == 'sysex':
+                eventos.extend(escribir_variable_length(delta))
+                eventos.append(evento[2])
+                eventos.extend(escribir_variable_length(len(evento[3])))
+                eventos.extend(evento[3])
+            
+            ultimo_tick = tick_abs
+        
+        # End of Track
+        eventos.extend(b'\x00\xFF\x2F\x00')
+        
+        # Construir pista completa
+        track_completo = b"MTrk" + struct.pack(">I", len(eventos)) + bytes(eventos)
+        
+        return track_completo
+    
+    def extraer_eventos_expert_raw(self, track_data):
+        """
+        Extrae eventos MIDI RAW de Expert (notas 95-100) de una pista.
+        95 = Open notes (moradas), 96-100 = G,R,Y,B,O
+        Retorna lista de (tick_absoluto, tipo, nota, velocity) para preservar exactamente.
+        """
+        eventos_expert = []
+        pos = 0
+        tiempo_absoluto = 0
+        running_status = 0
+        
+        while pos < len(track_data):
+            try:
+                delta_time, pos = leer_variable_length(track_data, pos)
+                tiempo_absoluto += delta_time
+                
+                if pos >= len(track_data):
+                    break
+                
+                status = track_data[pos]
+                if status < 0x80:
+                    status = running_status
+                    pos_evento = pos
+                else:
+                    pos += 1
+                    running_status = status
+                    pos_evento = pos
+                
+                # Note On (0x90-0x9F)
+                if 0x90 <= status <= 0x9F:
+                    if pos + 1 < len(track_data):
+                        note = track_data[pos]
+                        velocity = track_data[pos + 1]
+                        # Capturar notas de Expert: 95 (open) + 96-100 (G,R,Y,B,O)
+                        if 95 <= note <= 100:
+                            eventos_expert.append((tiempo_absoluto, 'on', note, velocity))
+                        pos += 2
+                
+                # Note Off (0x80-0x8F)
+                elif 0x80 <= status <= 0x8F:
+                    if pos + 1 < len(track_data):
+                        note = track_data[pos]
+                        # Capturar notas de Expert: 95 (open) + 96-100 (G,R,Y,B,O)
+                        if 95 <= note <= 100:
+                            eventos_expert.append((tiempo_absoluto, 'off', note, 0))
+                        pos += 2
+                elif 0xA0 <= status <= 0xBF:
+                    pos += 2 if pos + 1 < len(track_data) else 0
+                elif 0xC0 <= status <= 0xDF:
+                    pos += 1 if pos < len(track_data) else 0
+                elif 0xE0 <= status <= 0xEF:
+                    pos += 2 if pos + 1 < len(track_data) else 0
+                elif status == 0xFF:
+                    if pos < len(track_data):
+                        pos += 1
+                        length, pos = leer_variable_length(track_data, pos)
+                        pos += length
+                elif status == 0xF0 or status == 0xF7:
+                    length, pos = leer_variable_length(track_data, pos)
+                    pos += length
+                else:
+                    pos += 1
+            except:
+                pos += 1
+        
+        return eventos_expert
+    
+    def crear_pista_con_expert_raw(self, nombre_pista, eventos_expert_raw, dificultades_dict, eventos_especiales=[]):
+        """
+        Crea una pista MIDI con Expert RAW (preservado) + dificultades generadas + eventos especiales.
+        eventos_expert_raw: [(tick, tipo, nota, velocity), ...] - eventos MIDI raw de Expert
+        dificultades_dict: {'Hard': [(tick, fret, dur), ...], 'Medium': [...], 'Easy': [...]}
+        eventos_especiales: [(tick, nota_midi, duration), ...] - Star Power, Solo, etc.
+        """
+        eventos = bytearray()
+        
+        # Track Name
+        nombre_bytes = nombre_pista.encode('latin-1')
+        eventos.extend(b'\x00\xFF\x03')
+        eventos.extend(escribir_variable_length(len(nombre_bytes)))
+        eventos.extend(nombre_bytes)
+        
+        # Recopilar TODOS los eventos MIDI con tick absoluto
+        todos_eventos = []
+        
+        # 1. Agregar eventos RAW de Expert (preservados tal cual)
+        for tick, tipo, nota, velocity in eventos_expert_raw:
+            todos_eventos.append((tick, tipo, nota, velocity))
+        
+        # 2. Agregar eventos de dificultades generadas (Hard, Medium, Easy)
+        for diff, notas in dificultades_dict.items():
+            base_nota = RANGOS_NOTAS_MIDI.get(diff, 96)
+            for tick, fret, duration in notas:
+                nota_midi = base_nota + fret
+                dur = duration if duration > 0 else 10
+                
+                # Note On y Note Off como eventos separados
+                todos_eventos.append((tick, 'on', nota_midi, 96))
+                todos_eventos.append((tick + dur, 'off', nota_midi, 0))
+        
+        # 3. Agregar eventos especiales (Star Power, Solo, etc.)
+        for tick, nota_midi, duration in eventos_especiales:
+            dur = duration if duration > 0 else 10
+            todos_eventos.append((tick, 'on', nota_midi, 96))
+            todos_eventos.append((tick + dur, 'off', nota_midi, 0))
+        
+        # CRÍTICO: Ordenar TODOS los eventos por tick absoluto
+        # Si hay empate en tick, Note Off va antes que Note On
+        todos_eventos.sort(key=lambda x: (x[0], x[1] == 'on'))
+        
+        # Generar eventos MIDI con deltas correctos
+        ultimo_tick = 0
+        for evento in todos_eventos:
+            tick_abs, tipo, nota_midi, velocity = evento
+            delta = tick_abs - ultimo_tick
+            
+            if tipo == 'on':
+                # Note On
+                eventos.extend(escribir_variable_length(delta))
+                eventos.append(0x90)
+                eventos.append(nota_midi)
+                eventos.append(velocity)
+            else:
+                # Note Off
+                eventos.extend(escribir_variable_length(delta))
+                eventos.append(0x80)
+                eventos.append(nota_midi)
+                eventos.append(0)
+            
+            ultimo_tick = tick_abs
+        
+        # End of Track
+        eventos.extend(b'\x00\xFF\x2F\x00')
+        
+        # Construir pista completa
+        track_completo = b"MTrk" + struct.pack(">I", len(eventos)) + bytes(eventos)
+        
+        return track_completo
     
     def crear_pista_multidificultad(self, nombre_pista, dificultades_dict, eventos_especiales=[]):
         """
